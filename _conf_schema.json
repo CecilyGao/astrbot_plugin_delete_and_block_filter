@@ -118,5 +118,20 @@
         "description": "💬 最终输出拦截后的回复内容",
         "hint": "当最终消息被拦截时显示的内容。留空则对用户隐藏消息。",
         "default": ""
+    },
+        "final_delete_regex": {
+        "type": "list",
+        "description": "🔍 最终输出正则删除词列表",
+        "hint": "支持标准 Python 正则表达式。例如输入 `^/` 删除所有行首的 `/`。每个正则独立生效。",
+        "default": [],
+        "items": {
+            "type": "string"
+        }
+    },
+    "final_delete_regex_case_sensitive": {
+        "type": "bool",
+        "description": "🔤 最终输出正则删除词是否区分大小写",
+        "hint": "开启后，正则匹配时区分大小写（默认不区分）。",
+        "default": false
     }
 }
