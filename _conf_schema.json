@@ -119,19 +119,22 @@
         "hint": "当最终消息被拦截时显示的内容。留空则对用户隐藏消息。",
         "default": ""
     },
-        "final_delete_regex": {
-        "type": "list",
-        "description": "🔍 最终输出正则删除词列表",
-        "hint": "支持标准 Python 正则表达式。例如输入 `^/` 删除所有行首的 `/`。每个正则独立生效。",
-        "default": [],
-        "items": {
-            "type": "string"
-        }
+    "_separator_2": {
+        "type": "string",
+        "description": "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+        "hint": "以下为最终输出正则替换配置（在删除/拦截之前执行）",
+        "default": ""
     },
-    "final_delete_regex_case_sensitive": {
-        "type": "bool",
-        "description": "🔤 最终输出正则删除词是否区分大小写",
-        "hint": "开启后，正则匹配时区分大小写（默认不区分）。",
-        "default": false
+    "final_replace_pattern": {
+        "type": "string",
+        "description": "✨ 最终输出替换正则表达式",
+        "hint": "用于匹配需要替换的内容的正则表达式。留空则禁用替换功能。示例：'^/' 匹配行首的斜杠。支持Python正则语法。",
+        "default": ""
+    },
+    "final_replace_replacement": {
+        "type": "string",
+        "description": "✨ 最终输出替换内容",
+        "hint": "替换匹配到的内容，可以使用反向引用如 \\1。留空则删除匹配内容。示例：'#' 将行首斜杠替换为井号。",
+        "default": ""
     }
 }
