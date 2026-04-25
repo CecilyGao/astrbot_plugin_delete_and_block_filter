@@ -8,7 +8,7 @@ from astrbot.api import logger
 from astrbot.api.platform import AstrBotMessage
 from astrbot.api.message_components import Plain
 
-@register("astrbot_plugin_delete_and_block_filter", "enixi", "词语删除与拦截器。可管理LLM回复及Bot最终输出的屏蔽词。输入 /过滤配置 查看当前配置。", "2.0.0")
+@register("astrbot_plugin_delete_and_block_filter", "enixi", "词语删除与拦截器。可管理LLM回复及Bot最终输出的屏蔽词。输入 /过滤配置 查看当前配置。", "2.1.0")
 class CustomWordFilter(Star):
     def __init__(self, context: Context, config: dict):
         super().__init__(context)
@@ -23,7 +23,7 @@ class CustomWordFilter(Star):
             # 兼容旧版本
             self.data_dir = None
 
-        logger.info(f"[{self.plugin_id}] 插件已载入 (v2.0.0)")
+        logger.info(f"[{self.plugin_id}] 插件已载入 (v2.1.0)")
         try:
             self._reload_config()
         except Exception as e:
@@ -62,6 +62,9 @@ class CustomWordFilter(Star):
         self.config.setdefault('final_block_case_sensitive', False)
         self.config.setdefault('final_block_match_whole_word', False)
         self.config.setdefault('final_block_response', '')
+        # 新增：正则删除配置
+        self.config.setdefault('final_delete_regex', [])
+        self.config.setdefault('final_delete_regex_case_sensitive', False)
 
         # 加载到实例变量
         self.show_console_log = self.config.get('show_console_log', True)
@@ -83,6 +86,9 @@ class CustomWordFilter(Star):
         self.final_block_case_sensitive = self.config.get('final_block_case_sensitive', False)
         self.final_block_match_whole_word = self.config.get('final_block_match_whole_word', False)
         self.final_block_response = self.config.get('final_block_response', '')
+        # 新增
+        self.final_delete_regex = self.config.get('final_delete_regex', [])
+        self.final_delete_regex_case_sensitive = self.config.get('final_delete_regex_case_sensitive', False)
 
         logger.info(f"[{self.plugin_id}] 配置已重载")
 
@@ -285,7 +291,7 @@ class CustomWordFilter(Star):
                 
                 return
 
-        # 删除功能（支持特殊模式）
+        # 删除功能（支持特殊模式） - 普通删除词
         if self.final_delete_words:
             pattern = self._build_regex(self.final_delete_words, self.final_delete_case_sensitive, self.final_delete_match_whole_word)
             flags = 0 if self.final_delete_case_sensitive else re.IGNORECASE
@@ -316,7 +322,45 @@ class CustomWordFilter(Star):
                     
                     triggered_actions.append(f"删除敏感词(触发词: {triggered_words})")
                     result.chain = new_chain
-        
+
+        # 新增：正则表达式删除（处理经过普通删除后的文本）
+        if self.final_delete_regex:
+            # 获取当前最新文本（可能已被普通删除修改）
+            current_chain = result.chain
+            regex_flags = 0 if not self.final_delete_regex_case_sensitive else re.IGNORECASE  # 注意：0表示不忽略大小写？原来逻辑：不区分大小写传re.IGNORECASE，区分大小写传0。现在配置的case_sensitive=True表示区分大小写，则flags=0；False表示不区分，flags=re.IGNORECASE。
+            # 修正：case_sensitive为True表示区分大小写，不应使用IGNORECASE；False表示不区分，使用IGNORECASE。
+            flags = 0 if self.final_delete_regex_case_sensitive else re.IGNORECASE
+
+            new_chain = []
+            text_changed = False
+            triggered_regexes = []
+
+            for component in current_chain:
+                if isinstance(component, Plain):
+                    original_component_text = str(component.text)
+                    modified_component_text = original_component_text
+
+                    for regex_str in self.final_delete_regex:
+                        try:
+                            pattern = re.compile(regex_str, flags)
+                            new_text = pattern.sub('', modified_component_text)
+                            if new_text != modified_component_text:
+                                triggered_regexes.append(regex_str)
+                                text_changed = True
+                                modified_component_text = new_text
+                        except re.error as e:
+                            logger.error(f"[{self.plugin_id}] 无效的正则表达式 '{regex_str}': {e}")
+
+                    if modified_component_text.strip():
+                        new_chain.append(Plain(modified_component_text))
+                    # 如果删除后为空字符串，则不添加该组件
+                else:
+                    new_chain.append(component)
+
+            if text_changed:
+                triggered_actions.append(f"正则删除(触发: {triggered_regexes})")
+                result.chain = new_chain
+
         # 输出合并的日志（只在有操作时输出）
         if self.show_console_log and triggered_actions:
             final_text = self._get_text_from_result(result)
@@ -331,7 +375,7 @@ class CustomWordFilter(Star):
     @filter.command("过滤配置")
     async def cmd_show_config(self, event: AstrMessageEvent):
         """显示过滤器配置"""
-        if not event.is_admin(): 
+        if not event.is_admin():
             yield event.plain_result("抱歉，您没有权限。")
             return
         
@@ -340,7 +384,7 @@ class CustomWordFilter(Star):
         llm_status = "开启" if self.enable_llm_filter else "关闭"
         final_status = "开启" if self.enable_final_filter else "关闭"
         
-        config_text = f"""=== 过滤器配置 ({self.plugin_id} v2.0.0) ===
+        config_text = f"""=== 过滤器配置 ({self.plugin_id} v2.1.0) ===
 
 🔧 调试设置:
   • 控制台详细日志: {'开启' if self.show_console_log else '关闭'}
@@ -364,6 +408,8 @@ class CustomWordFilter(Star):
     - 区分大小写: {'是' if self.final_block_case_sensitive else '否'}
     - 完全匹配: {'是' if self.final_block_match_whole_word else '否 (推荐)'}
   • 拦截回复: {f"'{self.final_block_response}'" if self.final_block_response else '留空(直接隐藏)'}
+  • 正则删除词: {self.final_delete_regex if self.final_delete_regex else '无'}
+    - 大小写敏感: {'是' if self.final_delete_regex_case_sensitive else '否'}
 
 === 🚀 一键设置（推荐） ===
 发送: /一键设置错误过滤
@@ -381,6 +427,14 @@ class CustomWordFilter(Star):
 • 支持格式: &&...&&, **...**, ##...##, @@...@@, %%...%%, $$...$$
 • 示例: 添加删除词 '&&shy&&' 会删除 &&shy&&、&&nbsp&& 等
 
+=== 🧩 正则表达式删除说明 ===
+• 支持标准 Python 正则表达式，例如：
+  - 删除行首的 `/`：^/
+  - 删除数字：\\d+
+  - 删除括号内的内容：\\(.*?\\)
+• 命令：/加总输出正则删除词 <正则>  /减总输出正则删除词 <正则>
+• 开关大小写敏感：/设置总输出正则大小写敏感
+
 === 所有管理命令 ===
 开关控制:
   /开启LLM过滤   /关闭LLM过滤
@@ -395,7 +449,9 @@ LLM回复管理:
 最终输出管理:
   /加总输出删除词 <词语>  /减总输出删除词 <词语>
   /加总输出拦截词 <词语>  /减总输出拦截词 <词语>
+  /加总输出正则删除词 <正则>  /减总输出正则删除词 <正则>
   /设置总输出拦截回复 <内容>
+  /设置总输出正则大小写敏感
 
 测试功能:
   /测试删除词 <测试文本>
@@ -617,12 +673,72 @@ LLM回复管理:
         else:
             yield event.plain_result("✅ 总输出拦截回复已清空（将直接清空消息）")
 
+    # === 新增：正则删除管理命令 ===
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("加总输出正则删除词")
+    async def cmd_add_final_regex_delete_word(self, event: AstrMessageEvent, *, regex: str):
+        if not event.is_admin():
+            yield event.plain_result("抱歉，您没有权限。")
+            return
+        if not regex:
+            yield event.plain_result("请提供要添加的正则表达式")
+            return
+
+        # 验证正则表达式是否合法
+        try:
+            re.compile(regex)
+        except re.error as e:
+            yield event.plain_result(f"❌ 无效的正则表达式: {e}")
+            return
+
+        regex_list = self.config.get('final_delete_regex', [])
+        if regex not in regex_list:
+            regex_list.append(regex)
+            self.config['final_delete_regex'] = regex_list
+            self._save_config()
+            self._reload_config()
+            yield event.plain_result(f"✅ 已添加最终输出正则删除词: `{regex}`")
+        else:
+            yield event.plain_result(f"❗ 正则 `{regex}` 已在列表中")
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("减总输出正则删除词")
+    async def cmd_remove_final_regex_delete_word(self, event: AstrMessageEvent, *, regex: str):
+        if not event.is_admin():
+            yield event.plain_result("抱歉，您没有权限。")
+            return
+        if not regex:
+            yield event.plain_result("请提供要移除的正则表达式")
+            return
+
+        regex_list = self.config.get('final_delete_regex', [])
+        if regex in regex_list:
+            regex_list.remove(regex)
+            self.config['final_delete_regex'] = regex_list
+            self._save_config()
+            self._reload_config()
+            yield event.plain_result(f"✅ 已移除最终输出正则删除词: `{regex}`")
+        else:
+            yield event.plain_result(f"❗ 正则 `{regex}` 不在列表中")
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("设置总输出正则大小写敏感")
+    async def cmd_toggle_final_regex_case_sensitive(self, event: AstrMessageEvent):
+        if not event.is_admin():
+            yield event.plain_result("抱歉，您没有权限。")
+            return
+        current = self.config.get('final_delete_regex_case_sensitive', False)
+        self.config['final_delete_regex_case_sensitive'] = not current
+        self._save_config()
+        self._reload_config()
+        yield event.plain_result(f"✅ 最终输出正则表达式大小写敏感已设为: {'开启' if not current else '关闭'}")
+
     # === 快捷配置命令 ===
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("一键设置错误过滤")
     async def cmd_quick_setup_error_filter(self, event: AstrMessageEvent):
         """一键设置错误消息过滤"""
-        if not event.is_admin(): 
+        if not event.is_admin():
             yield event.plain_result("抱歉，您没有权限。")
             return
         
@@ -661,8 +777,8 @@ LLM回复管理:
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("测试删除词")
     async def cmd_test_delete_word(self, event: AstrMessageEvent, *, test_text: str = ""):
-        """测试删除词功能"""
-        if not event.is_admin(): 
+        """测试删除词功能（仅测试普通删除词，不包括正则）"""
+        if not event.is_admin():
             yield event.plain_result("抱歉，您没有权限。")
             return
         
@@ -702,6 +818,7 @@ LLM回复管理:
 
 💡 特殊模式示例:
   • 添加删除词 '&&&&' 可删除所有 &&...&& 格式
-  • 添加删除词 '&&shy&&' 只删除具体的 &&shy&&"""
+  • 添加删除词 '&&shy&&' 只删除具体的 &&shy&&
+  • 正则测试请直接发送消息观察效果"""
         
         yield event.plain_result(result_text)
